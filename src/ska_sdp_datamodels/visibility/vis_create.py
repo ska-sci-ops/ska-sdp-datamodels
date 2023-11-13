@@ -65,20 +65,19 @@ def create_visibility(
         with which the output Visibilities are assumed to have been observed.
         This is used to calculate (u, v, w) coordinates.
     :type config: Configuration
-    :param times: One-dimensional numpy array of floating point numbers
+    :param times: One-dimensional array corresponding to either time or hourangle.
+        If `times_are_ha=False`, one should pass an astropy.Time array of times. 
+        If `times_are_ha=True`, one should pass a numpy float array 
         representing hour angles in radians. Specifically, the hour angles
         under which the phase centre is seen from the centre of the
         interferometer. These get converted to a timestamp stored in the output
-        Visibility, via a process explained in the notes.
+        Visibility, via a process explained in the notes. 
         NOTE: how the data are interpreted is controlled by the `times_are_ha`
-        parameter. `times_are_ha=True` by default and you should *always* use
-        this. If `times_are_ha=False`, the data are also interpreted as radians
-        and then scaled by a factor SIDEREAL_DAY_SECONDS / SOLAR_DAY_SECONDS.
-        That code branch is not understood and likely an incorrect remnant of
-        the past. Do NOT use it.
-        TODO: parameter should be renamed `hour_angles`, and the
-        `times_are_ha=False` branch should be removed.
-    :type times: ndarray
+        parameter. `times_are_ha=True` by default as this has historically been
+        used for simulations. 
+        TODO: parameter `hour_angles` should be introduced when hour angles are
+        passed, and `times_are_ha=False` approach should be reconsidered.
+    :type times: astropy.Time if `times_are_ha=False` else numpy ndarray
     :param frequency: One-dimensional numpy array containing channel centre
         frequencies in Hz.
     :type frequency: ndarray
@@ -191,13 +190,19 @@ def create_visibility(
     ntimes = 0
     n_flagged = 0
 
+    # Handle hourangle calcs and time elapsed since epoch
+    if times_are_ha:
+        hourangles = times
+    else:
+        times.location = config.location
+        hourangles = times.sidereal_time('apparent').to('rad').value - phasecentre.icrs.ra.to('hourangle').to('rad').value
+
+
+
     for itime, time in enumerate(times):
         # Calculate the az/el of the phasecentre as seen from the centre of
         # the array for this hour angle and declination
-        if times_are_ha:
-            ha = time
-        else:
-            ha = time * (SIDEREAL_DAY_SECONDS / 86400.0)
+        ha = hourangles[itime]
 
         _, elevation = hadec_to_azel(ha, phasecentre.dec.rad, latitude)
         if elevation_limit is None or (elevation > elevation_limit):
@@ -244,17 +249,12 @@ def create_visibility(
     itime = 0
     for _, time in enumerate(times):
         if times_are_ha:
-            ha = time
-        else:
-            ha = time * (SIDEREAL_DAY_SECONDS / 86400.0)
+            ha = hourangles[itime]
 
         # Calculate the az/el of the phase centre as seen from the centre of
         # the array for this hour angle and declination
         _, elevation = hadec_to_azel(ha, phasecentre.dec.rad, latitude)
         if elevation_limit is None or (elevation > elevation_limit):
-            rtimes[itime] = stime.mjd * 86400.0 + time * 86400.0 / (
-                2.0 * numpy.pi
-            )
             rweight[itime, ...] = 1.0
             rflags[itime, ...] = 1
 
@@ -291,7 +291,7 @@ def create_visibility(
 
     vis = Visibility.constructor(
         uvw=ruvw,
-        time=rtimes,
+        time=times.mjd * 86400,
         frequency=frequency,
         vis=rvis,
         weight=rweight,
